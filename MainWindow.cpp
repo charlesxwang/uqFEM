@@ -439,8 +439,6 @@ bool copyPath(QString sourceDir, QString destinationDir, bool overWriteDirectory
     {
         return false;
     }
-
-
     else if(destinationDirectory.exists() && overWriteDirectory)
     {
         destinationDirectory.removeRecursively();
@@ -448,13 +446,12 @@ bool copyPath(QString sourceDir, QString destinationDir, bool overWriteDirectory
 
     originDirectory.mkpath(destinationDir);
 
-    foreach (QString directoryName, originDirectory.entryList(QDir::Dirs | \
-                                                              QDir::NoDotAndDotDot))
+    foreach (QString directoryName,
+             originDirectory.entryList(QDir::Dirs | QDir::NoDotAndDotDot))
     {
-        if (directoryName != QString("tmp.SimCenter")) {
-        QString destinationPath = destinationDir + "/" + directoryName;
-        originDirectory.mkpath(destinationPath);
-        copyPath(sourceDir + "/" + directoryName, destinationPath, overWriteDirectory);
+        if (!directoryName.startsWith(QString("tmp.SimCenter"))) {
+            QString destinationPath = destinationDir + "/" + directoryName;
+            copyPath(sourceDir + "/" + directoryName, destinationPath, overWriteDirectory);
         }
     }
 
@@ -489,33 +486,51 @@ void MainWindow::onRunButtonClicked() {
     QFileInfo fileInfo(mainInput);
     QDir fileDir = fileInfo.absolutePath();
 
-
     QString fileName =fileInfo.fileName();
     QString path = fileDir.absolutePath();// + QDir::separator();
 
+    qDebug() << "workdir set to " << fileDir;
     if (! fileDir.exists()) {
       errorMessage(QString("Directory ") + path + QString(" specified does not exist!"));
       return;
     }
-    
+    qDebug() << "workdir exists ";
 
     //
     // given path to input file we are going to create temporary directory below it
     // and copy all files from this input file directory to the new subdirectory
-    //
+    //  
+
+    // first, delete the tmp.SimCenter directory if it already exists ...
+    QString tmpSimCenterDirectoryName = path + QDir::separator() + QString("tmp.SimCenter");
+    QDir tmpSimCenterDirectory(tmpSimCenterDirectoryName);
+    if(tmpSimCenterDirectory.exists()) {
+        tmpSimCenterDirectory.removeRecursively();
+    }
+    // .. and delete the dakotaTab from the previous run if they are in the main folder
+    QString dakotaTabFileName = path + QDir::separator() + QString("dakotaTab.out");
+    QFile DakotaTabFile(dakotaTabFileName);
+    if (DakotaTabFile.exists()) {
+        DakotaTabFile.remove();
+    }
 
     QString tmpDirectory = path + QDir::separator() + QString("tmp.SimCenter") + QDir::separator() + QString("templatedir");
-    copyPath(path, tmpDirectory, false);
+    qDebug() << "creating the temp directory and copying files there... " << tmpDirectory;
+    copyPath(path, tmpDirectory, true);
+    qDebug() << "creating the temp directory and copying files there...  - SUCCESSFUL";
 
     // special copy the of the main script to set up lines containg parameters for dakota
     QString mainScriptTmp = tmpDirectory + QDir::separator() + fileName;
+    qDebug() << "creating a special copy of the main FE model script... " << mainScriptTmp;
     fem->specialCopyMainInput(mainScriptTmp, random->getParametereNames());
+    qDebug() << "creating a special copy of the main FE model script...  - SUCCESSFUL";
     //
     // in new templatedir dir save the UI data into dakota.json file (same result as using saveAs)
     //
 
     QString filenameTMP = tmpDirectory + QDir::separator() + tr("dakota.json");
 
+    qDebug() << "creating dakota input at " << filenameTMP;
     QFile file(filenameTMP);
     if (!file.open(QFile::WriteOnly | QFile::Text)) {
         QMessageBox::warning(this, tr("Application"),
@@ -530,6 +545,8 @@ void MainWindow::onRunButtonClicked() {
     QJsonDocument doc(json);
     file.write(doc.toJson());
     file.close();
+
+    qDebug() << "creating dakota input - SUCCESSFUL";
 
     //
     // now use the applications parseJSON file to run dakota and produce output files:
@@ -586,11 +603,18 @@ void MainWindow::onRunButtonClicked() {
 
 
 #ifdef Q_OS_WIN
-    QString command = QString("python ") + pySCRIPT + QString(" ") + tDirectory + QString(" ") + tmpDirectory  + QString(" runningLocal");
-    qDebug() << command;
-    proc->execute("cmd", QStringList() << "/C" << command);
+
+    QStringList args{pySCRIPT, tDirectory, tmpDirectory, "runningLocal"};
+    qDebug() << "Executing parseDAKOTA.py... " << args;
+    proc->execute("python", args);
+    qDebug() << "Executing parseDAKOTA.py... - SUCCESSFUL" ;
+
+
+    //QString command = QString("python ") + pySCRIPT + QString(" ") + tDirectory + QString(" ") + tmpDirectory  + QString(" runningLocal");
+    //qDebug() << command;
+    //proc->execute("cmd", QStringList() << "/C" << command);
     //   proc->start("cmd", QStringList(), QIODevice::ReadWrite);
-    qDebug() << command;
+    //qDebug() << command;
 
     //std::cerr << command << "\n";
 #else
@@ -610,6 +634,7 @@ void MainWindow::onRunButtonClicked() {
 
     // proc->start("bash", QStringList("-i"), QIODevice::ReadWrite);
 #endif
+
     proc->waitForStarted();
 
     //
@@ -621,8 +646,9 @@ void MainWindow::onRunButtonClicked() {
        QFile::copy(sourceDir + copy, destinationDir + copy);
    }
 
-   QDir dirToRemove(sourceDir);
-   dirToRemove.removeRecursively(); // padhye 4/28/2018, this removes the temprorary directory
+   //DEBUG
+   //QDir dirToRemove(sourceDir);
+   //dirToRemove.removeRecursively(); // padhye 4/28/2018, this removes the temprorary directory
                                     // so to debug you can simply comment it
 
     //
@@ -671,7 +697,7 @@ void MainWindow::onRemoteRunButtonClicked(){
     strUnique = strUnique.mid(1,36);
 
     QString tmpDirectory = path + QDir::separator() + QString("tmp.SimCenter") + strUnique + QDir::separator() + QString("templatedir");
-    copyPath(path, tmpDirectory, false);
+    copyPath(path, tmpDirectory, true);
 
     // special copy the of the main script to set up lines containg parameters for dakota
     QString mainScriptTmp = tmpDirectory + QDir::separator() + fileName;
@@ -745,9 +771,14 @@ void MainWindow::onRemoteRunButtonClicked(){
     QProcess *proc = new QProcess();
 
 #ifdef Q_OS_WIN
-    QString command = QString("python ") + pySCRIPT + QString(" ") + tDirectory + QString(" ") + tmpDirectory + QString(" runningRemote");
-    qDebug() << command;
-    proc->execute("cmd", QStringList() << "/C" << command);
+
+    QStringList args{pySCRIPT, tDirectory, tmpDirectory, "runningRemote"};
+    qDebug() << args;
+    proc->execute("python", args);
+
+    //QString command = QString("python ") + pySCRIPT + QString(" ") + tDirectory + QString(" ") + tmpDirectory + QString(" runningRemote");
+    //qDebug() << command;
+    //proc->execute("cmd", QStringList() << "/C" << command);
     //   proc->start("cmd", QStringList(), QIODevice::ReadWrite);
 
 #else
